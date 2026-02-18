@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cashify Payment Tester</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap');
+        body { font-family: 'Inter', sans-serif; background-color: #f8fafc; }
+        .spinner {
+            width: 20px; height: 20px;
+            border: 3px solid #ffffff;
+            border-bottom-color: transparent;
+            border-radius: 50%;
+            display: inline-block;
+            animation: rotation 1s linear infinite;
+        }
+        @keyframes rotation { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body class="flex items-center justify-center min-h-screen p-4">
+
+    <input type="hidden" id="conf_qris_id" value="fbcaf9f0-7ecb-46f1-a6b3-6e98731d5489">
+    <input type="hidden" id="conf_license" value="cashify_f220dd44ae36e2c9e582afbd515e8fa9f0afb07fdcb300a74fa4c699945ae6a2">
+
+    <div class="w-full max-w-sm bg-white rounded-2xl shadow-xl overflow-hidden border border-gray-100">
+        
+        <div class="bg-blue-600 p-5 text-white">
+            <div class="flex justify-between items-center">
+                <div>
+                    <h1 class="font-bold text-lg">Direct API Tester</h1>
+                    <p class="text-xs text-blue-200">GitHub Pages Mode</p>
+                </div>
+                <i class="fa-solid fa-code-branch text-2xl opacity-50"></i>
+            </div>
+        </div>
+
+        <div id="viewForm" class="p-6">
+            <div class="mb-5">
+                <label class="block text-gray-600 text-xs font-bold uppercase tracking-wider mb-2">Nominal (IDR)</label>
+                <div class="relative">
+                    <span class="absolute left-4 top-3.5 text-gray-400 font-bold">Rp</span>
+                    <input type="number" id="inpAmount" class="w-full pl-12 pr-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono text-xl font-bold text-gray-700" value="1000" placeholder="0">
+                </div>
+            </div>
+
+            <button onclick="generateQR()" id="btnGen" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 rounded-xl shadow-lg transition-transform active:scale-95 flex items-center justify-center gap-2">
+                <span>Buat QRIS</span>
+                <i class="fa-solid fa-qrcode"></i>
+            </button>
+        </div>
+
+        <div id="viewPayment" class="hidden p-6 text-center">
+            <div class="bg-blue-50 border border-blue-100 rounded-lg p-4 mb-5">
+                <p class="text-xs text-gray-500 font-bold uppercase">Total Tagihan</p>
+                <h2 class="text-3xl font-black text-gray-800 my-1" id="txtTotal">Rp 0</h2>
+                <div class="inline-block bg-yellow-100 text-yellow-800 text-xs px-2 py-1 rounded font-bold border border-yellow-200">
+                    Kode Unik: +<span id="txtUnique">0</span>
+                </div>
+            </div>
+
+            <div class="flex justify-center mb-6">
+                <div class="p-3 bg-white border rounded-xl shadow-sm relative group">
+                    <div id="qrCanvas"></div>
+                    <p class="text-[10px] text-gray-400 mt-2">Scan atau Screenshot</p>
+                </div>
+            </div>
+
+            <div class="flex items-center justify-center gap-2 text-blue-600 bg-gray-50 p-3 rounded-lg text-sm font-semibold mb-4">
+                <div class="spinner border-blue-600 border-b-transparent w-4 h-4"></div>
+                <span id="statusText">Menunggu Pembayaran...</span>
+            </div>
+
+            <button onclick="resetApp()" class="text-gray-400 text-sm hover:text-red-500 transition">Batalkan</button>
+        </div>
+
+        <div id="viewSuccess" class="hidden bg-white p-8 text-center h-full">
+            <div class="w-16 h-16 bg-green-100 text-green-500 rounded-full flex items-center justify-center mx-auto mb-4 text-3xl shadow-sm">
+                <i class="fa-solid fa-check"></i>
+            </div>
+            <h2 class="text-xl font-bold text-gray-800 mb-2">Pembayaran Berhasil!</h2>
+            <p class="text-gray-500 text-xs mb-6">Dana telah diterima oleh sistem.</p>
+            
+            <div class="border-t border-b border-gray-100 py-3 space-y-2 text-sm text-left">
+                <div class="flex justify-between">
+                    <span class="text-gray-400">ID Transaksi</span>
+                    <span class="font-mono text-gray-600 text-xs truncate w-24" id="recId">...</span>
+                </div>
+                <div class="flex justify-between">
+                    <span class="text-gray-400">Total</span>
+                    <span class="font-bold text-green-600" id="recAmount">...</span>
+                </div>
+            </div>
+
+            <button onclick="resetApp()" class="w-full mt-6 bg-gray-900 text-white font-bold py-3 rounded-xl shadow-lg">
+                Transaksi Baru
+            </button>
+        </div>
+
+    </div>
+
+    <script>
+        const API_URL = "https://cashify.my.id/api";
+        let currentTxId = null;
+        let pollInterval = null;
+
+        const formatIDR = (num) => new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(num);
+
+        async function generateQR() {
+            const amount = document.getElementById('inpAmount').value;
+            const btn = document.getElementById('btnGen');
+            
+            if (!amount || amount < 100) return alert("Minimal nominal Rp 100");
+
+            btn.disabled = true;
+            btn.innerHTML = '<div class="spinner mr-2"></div> Memproses...';
+
+            try {
+                const response = await fetch(API_URL + "/generate/v2/qris", {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'x-license-key': document.getElementById('conf_license').value
+                    },
+                    body: JSON.stringify({
+                        qr_id: document.getElementById('conf_qris_id').value,
+                        amount: parseInt(amount),
+                        useUniqueCode: true,
+                        packageIds: ["id.dana"],
+                        expiredInMinutes: 10,
+                        qrType: "dynamic",
+                        paymentMethod: "qris",
+                        useQris: true
+                    })
+                });
+
+                if (!response.ok) {
+                    const errText = await response.text();
+                    throw new Error(errText);
+                }
+
+                const result = await response.json();
+
+                if (result.status === 200 && result.data) {
+                    showPaymentUI(result.data);
+                } else {
+                    alert("Gagal: " + (result.message || "Respon tidak valid"));
+                    resetBtn();
+                }
+
+            } catch (error) {
+                console.error(error);
+                alert("Gagal Terhubung: " + error.message);
+                resetBtn();
+            }
+        }
+
+        function resetBtn() {
+            const btn = document.getElementById('btnGen');
+            btn.disabled = false;
+            btn.innerHTML = '<span>Buat QRIS</span><i class="fa-solid fa-qrcode"></i>';
+        }
+
+        function showPaymentUI(data) {
+            document.getElementById('viewForm').classList.add('hidden');
+            document.getElementById('viewPayment').classList.remove('hidden');
+
+            currentTxId = data.transactionId;
+            document.getElementById('txtTotal').innerText = formatIDR(data.totalAmount);
+            document.getElementById('txtUnique').innerText = data.uniqueNominal;
+
+            const qrCanvas = document.getElementById('qrCanvas');
+            qrCanvas.innerHTML = "";
+            new QRCode(qrCanvas, {
+                text: data.qr_string,
+                width: 180,
+                height: 180,
+                colorDark : "#000000",
+                colorLight : "#ffffff",
+                correctLevel : QRCode.CorrectLevel.L
+            });
+
+            startPolling();
+        }
+
+        function startPolling() {
+            if (pollInterval) clearInterval(pollInterval);
+
+            pollInterval = setInterval(async () => {
+                if (!currentTxId) return;
+
+                try {
+                    const res = await fetch(API_URL + "/generate/check-status", {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'x-license-key': document.getElementById('conf_license').value
+                        },
+                        body: JSON.stringify({ transactionId: currentTxId })
+                    });
+
+                    if (res.ok) {
+                        const json = await res.json();
+                        if (json.status === 200) {
+                            const status = json.data.status;
+                            if (status === 'paid' || status === 'success') {
+                                showSuccessUI(json.data);
+                            } else if (status === 'expired') {
+                                alert("Waktu Pembayaran Habis");
+                                resetApp();
+                            }
+                        }
+                    }
+                } catch (e) {
+                    console.log("Polling waiting...");
+                }
+            }, 3000);
+        }
+
+        function showSuccessUI(data) {
+            clearInterval(pollInterval);
+            document.getElementById('viewPayment').classList.add('hidden');
+            document.getElementById('viewSuccess').classList.remove('hidden');
+            document.getElementById('recId').innerText = data.transactionId;
+            document.getElementById('recAmount').innerText = formatIDR(data.amount);
+        }
+
+        function resetApp() {
+            clearInterval(pollInterval);
+            currentTxId = null;
+            document.getElementById('viewSuccess').classList.add('hidden');
+            document.getElementById('viewPayment').classList.add('hidden');
+            document.getElementById('viewForm').classList.remove('hidden');
+            resetBtn();
+        }
+    </script>
+</body>
+</html>
